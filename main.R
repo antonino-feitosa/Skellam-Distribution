@@ -41,6 +41,8 @@ experiments <- list(
   c(100, 100, 100)
 )
 
+experiments <- rev(experiments)
+
 
 start <- c(50,50)
 lowerParametricSpace <- c(0.01, 0.01)
@@ -62,7 +64,7 @@ momentEstimator <- function(sample){
   # https://www.google.com/url?sa=t&rct=j&q=&esrc=s&source=web&cd=&cad=rja&uact=8&ved=2ahUKEwitgYTn8JiCAxX9pZUCHSspD3sQFnoECAsQAQ&url=http%3A%2F%2Fwww2.stat-athens.aueb.gr%2F~karlis%2FTR101_Soc2.pdf&usg=AOvVaw1btx41d_xPkIwoAa5iM-YJ&opi=89978449
   # https://uregina.ca/~kozdron/Teaching/Regina/252Winter16/Handouts/ch5.pdf (justificativa da var)
   n <-length(sample) 
-  v <- (n-1)/n * var(sample)
+  v <- ((n-1) * var(sample))/n
   m <- mean(sample)
   par1 <- (v + m)/2
   par2 <- (v - m)/2
@@ -71,7 +73,6 @@ momentEstimator <- function(sample){
   return (c(par1, par2))
 }
 
-
 maximumLikelihoodEstimator <- function(sample){
   result <- optim(start, jointDensity, gr = NULL, sample, method = "L-BFGS-B", lower=lowerParametricSpace, upper=upperParametricSapce)
   if(result$convergence != 0)
@@ -79,11 +80,12 @@ maximumLikelihoodEstimator <- function(sample){
   result$par
 }
 
-boostrap <- function(sampledList, estimator, parans){
-  sampledListBoot <- replicate(repetitionsBoot, rskellam(n, parans[1], parans[2]), simplify = FALSE)
-  result <- sapply(sampledListBoot, maximumLikelihoodEstimator)
-  p1 <- 2 * parans[1] - mean(result[1,], na.rm = TRUE)
-  p2 <- 2 * parans[2] - mean(result[2,], na.rm = TRUE)
+bootstrap <- function(parans, n, estimator){
+  cat(parans, n, "\n")
+  sample <- replicate(repetitionsBoot, rskellam(n, parans[1], parans[2]), simplify = FALSE)
+  result <- sapply(sample, estimator)
+  p1 <- 2*parans[1] - mean(result[1,], na.rm = TRUE)
+  p2 <- 2*parans[2] - mean(result[2,], na.rm = TRUE)
   return (c(p1, p2))
 }
 
@@ -109,13 +111,18 @@ for (par in experiments){
     sampledList <- replicate(repetitions, rskellam(n, lambda1, lambda2), simplify = FALSE)
     
     print("Running mle")
-    monteCarlo.mle <- simplify2array(mclapply(sampledList, maximumLikelihoodEstimator, mc.cores = numcpus))
+    monteCarlo.mle <- mclapply(sampledList, maximumLikelihoodEstimator, mc.cores = numcpus)
     print("Running mme")
-    monteCarlo.mme <- simplify2array(mclapply(sampledList, momentEstimator, mc.cores = numcpus))
+    monteCarlo.mme <- mclapply(sampledList, momentEstimator, mc.cores = numcpus)
     print("Running boot.mme")
-    monteCarlo.boot.mme <- simplify2array(mclapply(sampledList, boostrap, momentEstimator, monteCarlo.mme, mc.cores = numcpus))
+    monteCarlo.boot.mme <- mclapply(monteCarlo.mme, bootstrap, n, momentEstimator, mc.cores = numcpus)
     print("Running boot.mle")
-    monteCarlo.boot.mle <- simplify2array(mclapply(sampledList, boostrap, maximumLikelihoodEstimator, monteCarlo.mle, mc.cores = numcpus))
+    monteCarlo.boot.mle <- mclapply(monteCarlo.mle, bootstrap, n, maximumLikelihoodEstimator, mc.cores = numcpus)
+    
+    monteCarlo.mle <- simplify2array(monteCarlo.mle)
+    monteCarlo.mme <- simplify2array(monteCarlo.mme)
+    monteCarlo.boot.mme <- simplify2array(monteCarlo.boot.mme)
+    monteCarlo.boot.mle <- simplify2array(monteCarlo.boot.mle)
     
     data <- data.frame(
       mle.y1      = resumeMonteCarlo("y1(mle)     ", monteCarlo.mle[1,], lambda1),
@@ -131,13 +138,13 @@ for (par in experiments){
     row.names(data) <- c("real", "mean", "variance", "bias", "mse")
     data <- t(data)
     
-    name <- paste0("results y1=", lambda1, " y2=",lambda2," n=",n," r=",repetitions," b=", repetitionsBoot ,".csv")
+    name <- paste0("results y1=", lambda1, " y2=", lambda2," n=", n," r=", repetitions, " b=", repetitionsBoot ,".csv")
     name <- paste0("./Documents/Skellam_Distribution/Skellam-Distribution/results/", name)
     print(data, digits = 4)
     
-    write.csv(data, file = name)
+    #write.csv(data, file = name)
     
     end_time <- Sys.time()
     cat("Elapsed Time:", end_time - start_time, "\n")
-  
 }
+
