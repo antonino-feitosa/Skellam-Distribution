@@ -1,7 +1,5 @@
 
-library(boot)
 library(skellam)
-library(parallel)
 
 
 ## https://en.wikipedia.org/wiki/Handball_at_the_Summer_Olympics
@@ -41,8 +39,6 @@ experiments <- list(
   c(100, 100, 100)
 )
 
-experiments <- rev(experiments)
-
 
 start <- c(50,50)
 lowerParametricSpace <- c(0.01, 0.01)
@@ -51,7 +47,6 @@ upperParametricSapce <- c(Inf, Inf)
 repetitions <- 2000
 repetitionsBoot <- 500
 
-numcpus <- 3
 
 
 jointDensity <- function(parans, sample){
@@ -63,8 +58,7 @@ momentEstimator <- function(sample){
   # https://www.emis.de/journals/BMMSS/pdf/acceptedpapers/2008-12-05a.pdf
   # https://www.google.com/url?sa=t&rct=j&q=&esrc=s&source=web&cd=&cad=rja&uact=8&ved=2ahUKEwitgYTn8JiCAxX9pZUCHSspD3sQFnoECAsQAQ&url=http%3A%2F%2Fwww2.stat-athens.aueb.gr%2F~karlis%2FTR101_Soc2.pdf&usg=AOvVaw1btx41d_xPkIwoAa5iM-YJ&opi=89978449
   # https://uregina.ca/~kozdron/Teaching/Regina/252Winter16/Handouts/ch5.pdf (justificativa da var)
-  n <-length(sample) 
-  v <- ((n-1) * var(sample))/n
+  v <- var(sample)
   m <- mean(sample)
   par1 <- (v + m)/2
   par2 <- (v - m)/2
@@ -76,14 +70,20 @@ momentEstimator <- function(sample){
 maximumLikelihoodEstimator <- function(sample){
   result <- optim(start, jointDensity, gr = NULL, sample, method = "L-BFGS-B", lower=lowerParametricSpace, upper=upperParametricSapce)
   if(result$convergence != 0)
-    result$par = c(NA,NA)
-  result$par
+    return (NA)
+  return (result$par)
+}
+
+dropNA <- function(values){
+  return (values[!is.na(values)])
 }
 
 bootstrap <- function(parans, n, estimator){
-  cat(parans, n, "\n")
   sample <- replicate(repetitionsBoot, rskellam(n, parans[1], parans[2]), simplify = FALSE)
-  result <- sapply(sample, estimator)
+  result <- lapply(sample, estimator)
+  result <- dropNA(result)
+  result <- simplify2array(result)
+  
   p1 <- 2*parans[1] - mean(result[1,], na.rm = TRUE)
   p2 <- 2*parans[2] - mean(result[2,], na.rm = TRUE)
   return (c(p1, p2))
@@ -98,53 +98,50 @@ resumeMonteCarlo <- function(name, sample, real){
 }
 
 for (par in experiments){
-    n <- par[1]
-    lambda1 <- par[2]
-    lambda2 <- par[3]
-    
-    cat('Running n=', n, '\n')
-      
-    start_time <- Sys.time()
-    
-    set.seed(0)
-    
-    sampledList <- replicate(repetitions, rskellam(n, lambda1, lambda2), simplify = FALSE)
-    
-    print("Running mle")
-    monteCarlo.mle <- mclapply(sampledList, maximumLikelihoodEstimator, mc.cores = numcpus)
-    print("Running mme")
-    monteCarlo.mme <- mclapply(sampledList, momentEstimator, mc.cores = numcpus)
-    print("Running boot.mme")
-    monteCarlo.boot.mme <- mclapply(monteCarlo.mme, bootstrap, n, momentEstimator, mc.cores = numcpus)
-    print("Running boot.mle")
-    monteCarlo.boot.mle <- mclapply(monteCarlo.mle, bootstrap, n, maximumLikelihoodEstimator, mc.cores = numcpus)
-    
-    monteCarlo.mle <- simplify2array(monteCarlo.mle)
-    monteCarlo.mme <- simplify2array(monteCarlo.mme)
-    monteCarlo.boot.mme <- simplify2array(monteCarlo.boot.mme)
-    monteCarlo.boot.mle <- simplify2array(monteCarlo.boot.mle)
-    
-    data <- data.frame(
-      mle.y1      = resumeMonteCarlo("y1(mle)     ", monteCarlo.mle[1,], lambda1),
-      mle.y2      = resumeMonteCarlo("y2(mle)     ", monteCarlo.mle[2,], lambda2),
-      mme.y1      = resumeMonteCarlo("y1(mme)     ", monteCarlo.mme[1,], lambda1),
-      mme.y2      = resumeMonteCarlo("y2(mme)     ", monteCarlo.mme[2,], lambda2),
-      mle.boot.y1 = resumeMonteCarlo("y1(mle.boot)", monteCarlo.boot.mle[1,], lambda1),
-      mle.boot.y2 = resumeMonteCarlo("y2(mle.boot)", monteCarlo.boot.mle[2,], lambda2),
-      mme.boot.y1 = resumeMonteCarlo("y1(mme.boot)", monteCarlo.boot.mme[1,], lambda1),
-      mme.boot.y2 = resumeMonteCarlo("y2(mme.boot)", monteCarlo.boot.mme[2,], lambda2)
-    )
-    
-    row.names(data) <- c("real", "mean", "variance", "bias", "mse")
-    data <- t(data)
-    
-    name <- paste0("results y1=", lambda1, " y2=", lambda2," n=", n," r=", repetitions, " b=", repetitionsBoot ,".csv")
-    name <- paste0("./Documents/Skellam_Distribution/Skellam-Distribution/results/", name)
-    print(data, digits = 4)
-    
-    #write.csv(data, file = name)
-    
-    end_time <- Sys.time()
-    cat("Elapsed Time:", end_time - start_time, "\n")
+  n <- par[1]
+  lambda1 <- par[2]
+  lambda2 <- par[3]
+  
+  cat('Running n=', n, '\n')
+  
+  start_time <- Sys.time()
+  
+  set.seed(0)
+  
+  sampledList <- replicate(repetitions, rskellam(n, lambda1, lambda2), simplify = FALSE)
+  
+  print("Running mle")
+  monteCarlo.mle <- lapply(sampledList, maximumLikelihoodEstimator)
+  print("Running mme")
+  monteCarlo.mme <- lapply(sampledList, momentEstimator)
+  print("Running boot.mme")
+  monteCarlo.boot.mme <- sapply(dropNA(monteCarlo.mme), bootstrap, n, momentEstimator)
+  print("Running boot.mle")
+  monteCarlo.boot.mle <- sapply(dropNA(monteCarlo.mle), bootstrap, n, maximumLikelihoodEstimator)
+  
+  monteCarlo.mle <- simplify2array(monteCarlo.mle)
+  monteCarlo.mme <- simplify2array(monteCarlo.mme)
+  
+  data <- data.frame(
+    mle.y1      = resumeMonteCarlo("y1(mle)     ", monteCarlo.mle[1,], lambda1),
+    mle.y2      = resumeMonteCarlo("y2(mle)     ", monteCarlo.mle[2,], lambda2),
+    mme.y1      = resumeMonteCarlo("y1(mme)     ", monteCarlo.mme[1,], lambda1),
+    mme.y2      = resumeMonteCarlo("y2(mme)     ", monteCarlo.mme[2,], lambda2),
+    mle.boot.y1 = resumeMonteCarlo("y1(mle.boot)", monteCarlo.boot.mle[1,], lambda1),
+    mle.boot.y2 = resumeMonteCarlo("y2(mle.boot)", monteCarlo.boot.mle[2,], lambda2),
+    mme.boot.y1 = resumeMonteCarlo("y1(mme.boot)", monteCarlo.boot.mme[1,], lambda1),
+    mme.boot.y2 = resumeMonteCarlo("y2(mme.boot)", monteCarlo.boot.mme[2,], lambda2)
+  )
+  
+  row.names(data) <- c("real", "mean", "variance", "bias", "mse")
+  data <- t(data)
+  
+  name <- paste0("results y1=", lambda1, " y2=", lambda2," n=", n," r=", repetitions, " b=", repetitionsBoot ,".csv")
+  name <- paste0("./Documents/Skellam_Distribution/Skellam-Distribution/results/", name)
+  print(data, digits = 4)
+  
+  write.csv(data, file = name)
+  
+  end_time <- Sys.time()
+  cat("Elapsed Time:", end_time - start_time, "\n")
 }
-
