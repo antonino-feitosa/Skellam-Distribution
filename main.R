@@ -39,13 +39,12 @@ experiments <- list(
   c(100, 100, 100)
 )
 
+repetitions <- 2000
+repetitionsBoot <- 500
 
 start <- c(50,50)
 lowerParametricSpace <- c(0.01, 0.01)
 upperParametricSapce <- c(Inf, Inf)
-
-repetitions <- 2000
-repetitionsBoot <- 500
 
 
 
@@ -70,32 +69,40 @@ momentEstimator <- function(sample){
 maximumLikelihoodEstimator <- function(sample){
   result <- optim(start, jointDensity, gr = NULL, sample, method = "L-BFGS-B", lower=lowerParametricSpace, upper=upperParametricSapce)
   if(result$convergence != 0)
-    return (NA)
-  return (result$par)
+    return (c(TRUE, result$par))
+  return (c(FALSE, result$par))
 }
 
-dropNA <- function(values){
-  return (values[!is.na(values)])
-}
-
-bootstrap <- function(parans, n, estimator){
-  sample <- replicate(repetitionsBoot, rskellam(n, parans[1], parans[2]), simplify = FALSE)
-  result <- lapply(sample, estimator)
-  result <- dropNA(result)
-  result <- simplify2array(result)
-  
-  p1 <- 2*parans[1] - mean(result[1,], na.rm = TRUE)
-  p2 <- 2*parans[2] - mean(result[2,], na.rm = TRUE)
-  return (c(p1, p2))
-}
 
 resumeMonteCarlo <- function(name, sample, real){
-  m <- mean(sample, na.rm = TRUE)
-  v <- var(sample, na.rm = TRUE)
+  m <- mean(sample)
+  v <- var(sample)
   b <- m - real
   e <- b^2 + v
   return (c(real, m, v, b, e))
 }
+
+
+
+
+lambda1.mle <- numeric(repetitions)
+lambda2.mle <- numeric(repetitions)
+
+lambda1.mme <- numeric(repetitions)
+lambda2.mme <- numeric(repetitions)
+
+lambda1.boot.mle <- numeric(repetitionsBoot)
+lambda2.boot.mle <- numeric(repetitionsBoot)
+
+lambda1.boot.mme <- numeric(repetitionsBoot)
+lambda2.boot.mme <- numeric(repetitionsBoot)
+
+lambda1.coorected.mle <- numeric(repetitions)
+lambda2.coorected.mle <- numeric(repetitions)
+
+lambda1.coorected.mme <- numeric(repetitions)
+lambda2.coorected.mme <- numeric(repetitions)
+
 
 for (par in experiments){
   n <- par[1]
@@ -108,33 +115,67 @@ for (par in experiments){
   
   set.seed(0)
   
-  sampledList <- replicate(repetitions, rskellam(n, lambda1, lambda2), simplify = FALSE)
+  canFail <- 10000
   
-  print("Running mle")
-  monteCarlo.mle <- lapply(sampledList, maximumLikelihoodEstimator)
-  print("Running mme")
-  monteCarlo.mme <- lapply(sampledList, momentEstimator)
-  print("Running boot.mme")
-  monteCarlo.boot.mme <- sapply(dropNA(monteCarlo.mme), bootstrap, n, momentEstimator)
-  print("Running boot.mle")
-  monteCarlo.boot.mle <- sapply(dropNA(monteCarlo.mle), bootstrap, n, maximumLikelihoodEstimator)
+  i <- 1
+  while(i <= repetitions && canFail > 0){
+    sample <- rskellam(n, lambda1, lambda2)
+    
+    parans <- maximumLikelihoodEstimator(sample)
+    if(parans[1]){
+      canFail = canFail - 1
+      next
+    }
+    lambda1.mle[i] = parans[2]
+    lambda2.mle[i] = parans[3]
+    
+    parans <- momentEstimator(sample)
+    lambda1.mme[i] = parans[1]
+    lambda2.mme[i] = parans[2]
+    
+    j <- 1
+    while(j <= repetitionsBoot && canFail > 0){
+      sample <- rskellam(n, lambda1.mle[i], lambda2.mle[i])
+      parans <- maximumLikelihoodEstimator(sample)
+      if(parans[1]){
+        canFail = canFail - 1
+        next
+      }
+      lambda1.boot.mle[j] = parans[2]
+      lambda2.boot.mle[j] = parans[3]
+      
+      sample <- rskellam(n, lambda1.mme[i], lambda2.mme[i])
+      parans <- momentEstimator(sample)
+      lambda1.boot.mme[j] = parans[1]
+      lambda2.boot.mme[j] = parans[2]
+      
+      j = j + 1
+    }
+    
+    lambda1.coorected.mle[i] <- 2 * lambda1.mle[i] - mean(lambda1.boot.mle)
+    lambda2.coorected.mle[i] <- 2 * lambda2.mle[i] - mean(lambda2.boot.mle)
+    lambda1.coorected.mme[i] <- 2 * lambda1.mme[i] - mean(lambda1.boot.mme)
+    lambda2.coorected.mme[i] <- 2 * lambda2.mme[i] - mean(lambda2.boot.mme)
+    
+    
+    
+    data <- data.frame(
+      mle.y1      = resumeMonteCarlo("lambda1(mle)     ", lambda1.mle, lambda1),
+      mle.y2      = resumeMonteCarlo("lambda2(mle)     ", lambda2.mle, lambda2),
+      mme.y1      = resumeMonteCarlo("lambda1(mme)     ", lambda1.mme, lambda1),
+      mme.y2      = resumeMonteCarlo("lambda2(mme)     ", lambda2.mme, lambda2),
+      mle.boot.y1 = resumeMonteCarlo("lambda1(mle.boot)", lambda1.coorected.mle, lambda1),
+      mle.boot.y2 = resumeMonteCarlo("lambda2(mle.boot)", lambda2.coorected.mle, lambda2),
+      mme.boot.y1 = resumeMonteCarlo("lambda1(mme.boot)", lambda1.coorected.mme, lambda1),
+      mme.boot.y2 = resumeMonteCarlo("lambda2(mme.boot)", lambda2.coorected.mme, lambda2)
+    )
+    
+    row.names(data) <- c("real", "mean", "variance", "bias", "mse")
+    data <- t(data)
+    
+    i = i + 1
+  }
   
-  monteCarlo.mle <- simplify2array(monteCarlo.mle)
-  monteCarlo.mme <- simplify2array(monteCarlo.mme)
-  
-  data <- data.frame(
-    mle.y1      = resumeMonteCarlo("y1(mle)     ", monteCarlo.mle[1,], lambda1),
-    mle.y2      = resumeMonteCarlo("y2(mle)     ", monteCarlo.mle[2,], lambda2),
-    mme.y1      = resumeMonteCarlo("y1(mme)     ", monteCarlo.mme[1,], lambda1),
-    mme.y2      = resumeMonteCarlo("y2(mme)     ", monteCarlo.mme[2,], lambda2),
-    mle.boot.y1 = resumeMonteCarlo("y1(mle.boot)", monteCarlo.boot.mle[1,], lambda1),
-    mle.boot.y2 = resumeMonteCarlo("y2(mle.boot)", monteCarlo.boot.mle[2,], lambda2),
-    mme.boot.y1 = resumeMonteCarlo("y1(mme.boot)", monteCarlo.boot.mme[1,], lambda1),
-    mme.boot.y2 = resumeMonteCarlo("y2(mme.boot)", monteCarlo.boot.mme[2,], lambda2)
-  )
-  
-  row.names(data) <- c("real", "mean", "variance", "bias", "mse")
-  data <- t(data)
   
   name <- paste0("results y1=", lambda1, " y2=", lambda2," n=", n," r=", repetitions, " b=", repetitionsBoot ,".csv")
   name <- paste0("./Documents/Skellam_Distribution/Skellam-Distribution/results/", name)
@@ -145,3 +186,8 @@ for (par in experiments){
   end_time <- Sys.time()
   cat("Elapsed Time:", end_time - start_time, "\n")
 }
+
+
+
+
+
